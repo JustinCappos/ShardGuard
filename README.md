@@ -73,6 +73,7 @@ practical yet effective path to safe LLM-driven automation.
 #### Using Google Gemini (Remote Models)
 
 1. **Get a Gemini API key**:
+
    - Visit [Google AI Studio](https://aistudio.google.com/)
    - Create an API key
 
@@ -113,10 +114,10 @@ shardguard plan "Your prompt" --provider gemini --gemini-api-key "your-key"
 
 ### Available Models
 
-| Provider | Models | Notes |
-|----------|--------|-------|
+| Provider   | Models                                                                     | Notes                    |
+| ---------- | -------------------------------------------------------------------------- | ------------------------ |
 | **Gemini** | `gemini-2.0-flash-exp` (default)<br>`gemini-1.5-pro`<br>`gemini-1.5-flash` | Remote, requires API key |
-| **Ollama** | `llama3.2` (default)<br>`llama3.1`<br>`codellama`<br>`mistral` | Local, free |
+| **Ollama** | `llama3.2` (default)<br>`llama3.1`<br>`codellama`<br>`mistral`             | Local, free              |
 
 ## Development
 
