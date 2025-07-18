@@ -73,6 +73,7 @@ practical yet effective path to safe LLM-driven automation.
 #### Using Google Gemini (Remote Models)
 
 1. **Get a Gemini API key**:
+
    - Visit [Google AI Studio](https://aistudio.google.com/)
    - Create an API key
 
@@ -113,10 +114,10 @@ shardguard plan "Your prompt" --provider gemini --gemini-api-key "your-key"
 
 ### Available Models
 
-| Provider | Models | Notes |
-|----------|--------|-------|
+| Provider   | Models                                                                     | Notes                    |
+| ---------- | -------------------------------------------------------------------------- | ------------------------ |
 | **Gemini** | `gemini-2.0-flash-exp` (default)<br>`gemini-1.5-pro`<br>`gemini-1.5-flash` | Remote, requires API key |
-| **Ollama** | `llama3.2` (default)<br>`llama3.1`<br>`codellama`<br>`mistral` | Local, free |
+| **Ollama** | `llama3.2` (default)<br>`llama3.1`<br>`codellama`<br>`mistral`             | Local, free              |
 
 ## Development
 
@@ -152,9 +153,25 @@ src/shardguard/
 │   ├── models.py       # Data models
 │   ├── planning.py     # Planning LLM implementations
 │   └── prompts.py      # Prompt templates
+|-- mcp_servers/
+|   |-- run_server.py   # Service running to handle the servers
+|   |-- servers.yaml    # YAML file containing all the tools and server descriptions
 └── utils/
     └── logging.py      # Logging utilities
 ```
+
+### Guide to Creating Your Own MCP Server
+
+ShardGuard uses a YAML-based tool registry to define and manage Model Context Protocol (MCP) operations securely.
+You can create your own MCP server by defining tools in `servers.yaml`.
+
+**Steps:**
+
+1. Define your tools in `servers.yaml`
+2. Each operation is grouped by **Server Name** (e.g., file-operations, database-operations, etc.). For each tool, specify:
+   - name: A unique identifier used when calling the tool
+   - description: Human-readable summary
+   - inputSchema: JSON Schema to validate expected inputs
 
 ### Example Output
 
