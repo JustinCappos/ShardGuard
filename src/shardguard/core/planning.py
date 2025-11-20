@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Protocol
 
+import dirtyjson
+
 from .llm_providers import LLMProviderFactory
 from .mcp_integration import MCPClient
 
@@ -71,21 +73,23 @@ class PlanningLLM:
 
     def _extract_json_from_response(self, response: str) -> str:
         """Extract JSON from LLM response that might contain extra text."""
-        # Try to find JSON block enclosed in curly braces
-        matches = re.findall(r"\{.*\}", response, re.DOTALL)
-
-        if matches:
-            # Return the longest JSON-like match
-            json_candidate = max(matches, key=len)
-            # Validate that it's actually valid JSON
-            try:
-                json.loads(json_candidate)
-                return json_candidate
-            except json.JSONDecodeError:
-                pass
-
-        # If no valid JSON found, return the original response
-        return response
+        try:
+            obj = dirtyjson.loads(response, search_for_first_object=True)
+            return json.dumps(obj)
+        except Exception:
+            # Try to find a JSON block enclosed in curly braces as a fallback
+            matches = re.findall(r"\{.*\}", response, re.DOTALL)
+            if matches:
+                # Return the longest JSON-like match
+                json_candidate = max(matches, key=len)
+                # Validate that it's actually valid JSON
+                try:
+                    json.loads(json_candidate)
+                    return json_candidate
+                except json.JSONDecodeError:
+                    pass
+            # If no valid JSON is found, return the original response
+            return response
 
     def _create_fallback_response(self, prompt: str, error: str) -> str:
         """Create a fallback response when plan generation fails."""
