@@ -116,7 +116,6 @@ class OllamaProvider(LLMProvider):
                         "id": 1,
                         "content": content,
                         "opaque_values": {},
-                        "suggested_tools": ["file-operations.read_file"],
                     }
                 ],
             }
@@ -167,6 +166,8 @@ class GeminiProvider(LLMProvider):
             # Gemini API is synchronous, so we'll run it as is
             response = self.client.generate_content(
                 prompt,
+                # If you change values here, make sure to change it in the test case as well, 
+                # we are testing whether the configuration is being set correctly by the provider
                 generation_config={
                     "temperature": 0.1,
                     "top_p": 0.9,
@@ -212,7 +213,6 @@ class GeminiProvider(LLMProvider):
                         "id": 1,
                         "content": content,
                         "opaque_values": {},
-                        "suggested_tools": ["file-operations.read_file"],
                     }
                 ],
             }
@@ -223,17 +223,13 @@ class GeminiProvider(LLMProvider):
         pass
 
 
-class LLMProviderFactory:
-    """Factory for creating LLM providers."""
-
-    @staticmethod
-    def create_provider(provider_type: str, model: str, **kwargs) -> LLMProvider:
-        """Create an LLM provider based on the provider type."""
-        if provider_type.lower() == "ollama":
-            base_url = kwargs.get("base_url", "http://localhost:11434")
-            return OllamaProvider(model=model, base_url=base_url)
-        elif provider_type.lower() == "gemini":
-            api_key = kwargs.get("api_key") or os.getenv("GEMINI_API_KEY")
-            return GeminiProvider(model=model, api_key=api_key)
-        else:
-            raise ValueError(f"Unsupported provider type: {provider_type}")
+def create_provider(provider_type: str, model: str, **kwargs) -> LLMProvider:
+    """Create an LLM provider based on the provider type."""
+    if provider_type.lower() == "ollama":
+        base_url = kwargs.get("base_url", "http://localhost:11434")
+        return OllamaProvider(model=model, base_url=base_url)
+    elif provider_type.lower() == "gemini":
+        api_key = kwargs.get("api_key") or os.getenv("GEMINI_API_KEY")
+        return GeminiProvider(model=model, api_key=api_key)
+    else:
+        raise ValueError(f"Unsupported provider type: {provider_type}")
