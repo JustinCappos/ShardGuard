@@ -13,36 +13,33 @@ logger = logging.getLogger(__name__)
 class MCPClient:
     """Client for communicating with MCP servers."""
 
+    def load_server_configs(servers_yaml_path, run_server_path):
+        import yaml
+
+        with open(servers_yaml_path, "r") as f:
+            config = yaml.safe_load(f)
+
+        server_configs = {}
+        for server_name in config.keys():
+            server_configs[server_name] = {
+                "command": sys.executable,
+                "args": [run_server_path, "--server-name", server_name],
+                "description": f"{server_name.replace('-', ' ').capitalize()} with security controls"
+            }
+        return server_configs
+
     def __init__(self):
         """Initialize the MCP client."""
         import os
 
         # Get the absolute path to the servers directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        servers_dir = os.path.join(os.path.dirname(current_dir), "mcp_servers")
+        root_dir = os.path.dirname(current_dir)
+        server_dir = os.path.join(root_dir, "mcp_servers")
+        run_server_path = os.path.join(server_dir, "run_server.py")
+        servers_yaml_path = os.path.join(server_dir, "servers.yaml")
 
-        self.server_configs = {
-            "file-operations": {
-                "command": sys.executable,
-                "args": [os.path.join(servers_dir, "file_server.py")],
-                "description": "File operations with security controls",
-            },
-            "email-operations": {
-                "command": sys.executable,
-                "args": [os.path.join(servers_dir, "email_server.py")],
-                "description": "Email operations with privacy controls",
-            },
-            "database-operations": {
-                "command": sys.executable,
-                "args": [os.path.join(servers_dir, "database_server.py")],
-                "description": "Database operations with security controls",
-            },
-            "web-operations": {
-                "command": sys.executable,
-                "args": [os.path.join(servers_dir, "web_server.py")],
-                "description": "Web operations with security controls",
-            },
-        }
+        self.server_configs = MCPClient.load_server_configs(servers_yaml_path, run_server_path)
 
     async def _execute_with_server(self, server_name: str, operation):
         """Execute an operation with a server connection."""
