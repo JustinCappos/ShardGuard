@@ -223,6 +223,98 @@ class GeminiProvider(LLMProvider):
         pass
 
 
+class OpenAIProvider(LLMProvider):
+    """OpenAI LLM provider for remote models."""
+
+    def __init__(self, model: str = "gpt-4", api_key: str | None = None):
+        self.model = model
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.client = None
+        self._init_client()
+
+    def _init_client(self):
+        """Initialize the OpenAI client."""
+        if not self.api_key:
+            logger.warning(
+                "No OpenAI API key provided. Provider will use mock responses."
+            )
+            return
+
+        try:
+            from openai import OpenAI
+
+            self.client = OpenAI(api_key=self.api_key)
+            logger.info(f"Initialized OpenAI client with model: {self.model}")
+        except ImportError:
+            logger.warning(
+                "openai not available. OpenAI provider will use mock responses."
+            )
+        except Exception as e:
+            logger.error(f"Error initializing OpenAI client: {e}")
+
+    async def generate_response(self, prompt: str) -> str:
+        """Generate a response using OpenAI."""
+        if not self.client or not self.api_key:
+            return self._mock_response(prompt)
+
+        try:
+            # OpenAI API is synchronous, so we'll run it as is
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                top_p=0.9,
+                max_tokens=2048,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            logger.error(f"Error calling OpenAI: {e}")
+            return self._mock_response(prompt, error=str(e))
+
+    def generate_response_sync(self, prompt: str) -> str:
+        """Generate a response using OpenAI (synchronous)."""
+        if not self.client or not self.api_key:
+            return self._mock_response(prompt)
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                top_p=0.9,
+                max_tokens=2048,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            logger.error(f"Error calling OpenAI: {e}")
+            return self._mock_response(prompt, error=str(e))
+
+    def _mock_response(self, prompt: str, error: str | None = None) -> str:
+        """Generate a mock response for testing or fallback."""
+        content = (
+            f"Error occurred: {error}"
+            if error
+            else "This is a mock response - OpenAI API not available"
+        )
+        return json.dumps(
+            {
+                "original_prompt": prompt,
+                "sub_prompts": [
+                    {
+                        "id": 1,
+                        "content": content,
+                        "opaque_values": {},
+                        "suggested_tools": ["file-operations.read_file"],
+                    }
+                ],
+            }
+        )
+
+    def close(self):
+        """Close any connections (OpenAI doesn't require explicit closing)."""
+        pass
+
+
 class LLMProviderFactory:
     """Factory for creating LLM providers."""
 
@@ -235,5 +327,8 @@ class LLMProviderFactory:
         elif provider_type.lower() == "gemini":
             api_key = kwargs.get("api_key") or os.getenv("GEMINI_API_KEY")
             return GeminiProvider(model=model, api_key=api_key)
+        elif provider_type.lower() == "openai":
+            api_key = kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
+            return OpenAIProvider(model=model, api_key=api_key)
         else:
             raise ValueError(f"Unsupported provider type: {provider_type}")
