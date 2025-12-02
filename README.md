@@ -15,7 +15,7 @@ practical yet effective path to safe LLM-driven automation.
 ## Features
 
 - **Input Sanitization**: Automatically sanitizes user input with rich CLI logging
-- **Multi-Provider LLM Integration**: Supports both local Ollama and remote LLM providers (Google Gemini)
+- **Multi-Provider LLM Integration**: Supports both local Ollama and remote LLM providers (Google Gemini, OpenAI)
 - **Sensitive Data Masking**: Automatically identifies and masks sensitive information with reference placeholders
 - **Flexible Model Support**: Works with various models including llama3.2, gemini-2.0-flash-exp, and more
 
@@ -25,7 +25,7 @@ practical yet effective path to safe LLM-driven automation.
 
 - Python 3.13+
 - Poetry (for dependency management)
-- Ollama (for local models) OR Google AI API key (for Gemini models)
+- Ollama (for local models) OR Google AI API key (for Gemini models) OR OpenAI API key (for OpenAI models)
 
 ### Installation
 
@@ -93,6 +93,29 @@ practical yet effective path to safe LLM-driven automation.
    poetry run shardguard plan "Send an email to john@example.com about the meeting" --provider gemini --model gemini-2.0-flash-exp
    ```
 
+#### Using OpenAI (Remote Models)
+
+1. **Get an OpenAI API key**:
+   - Visit [OpenAI Platform](https://platform.openai.com/api-keys)
+   - Create an API key
+
+2. **Set your API key**:
+
+   ```bash
+   # Option 1: Create a .env file (recommended)
+   cp .env.example .env
+   # Edit .env and add your API key: OPENAI_API_KEY=your-api-key-here
+
+   # Option 2: Set environment variable
+   export OPENAI_API_KEY="your-api-key-here"
+   ```
+
+3. **Run ShardGuard with OpenAI**:
+
+   ```bash
+   poetry run shardguard plan "Send an email to john@example.com about the meeting" --provider openai --model gpt-4
+   ```
+
 #### Advanced Usage
 
 ```bash
@@ -102,11 +125,17 @@ shardguard list-tools --provider ollama --model llama3.2
 # List available MCP tools with Gemini
 shardguard list-tools --provider gemini --model gemini-2.0-flash-exp
 
+# List available MCP tools with OpenAI
+shardguard list-tools --provider openai --model gpt-4
+
 # Use custom Ollama URL
 shardguard plan "Your prompt" --provider ollama --ollama-url http://localhost:11434
 
 # Pass Gemini API key directly (not recommended for security)
 shardguard plan "Your prompt" --provider gemini --gemini-api-key "your-key"
+
+# Pass OpenAI API key directly (not recommended for security)
+shardguard plan "Your prompt" --provider openai --openai-api-key "your-key"
 ```
 
 ## Configuration
@@ -116,6 +145,7 @@ shardguard plan "Your prompt" --provider gemini --gemini-api-key "your-key"
 | Provider | Models | Notes |
 |----------|--------|-------|
 | **Gemini** | `gemini-2.0-flash-exp` (default)<br>`gemini-1.5-pro`<br>`gemini-1.5-flash` | Remote, requires API key |
+| **OpenAI** | `gpt-4` (default)<br>`gpt-4-turbo` | Remote, requires API key |
 | **Ollama** | `llama3.2` (default)<br>`llama3.1`<br>`codellama`<br>`mistral` | Local, free |
 
 ## Development
@@ -147,7 +177,7 @@ src/shardguard/
 ├── cli.py              # CLI interface with multi-provider support
 ├── core/
 │   ├── coordination.py # Main service
-│   ├── llm_providers.py # LLM provider implementations (Ollama, Gemini)
+│   ├── llm_providers.py # LLM provider implementations (Ollama, Gemini, OpenAI)
 │   ├── mcp_integration.py # MCP integration with provider support
 │   ├── models.py       # Data models
 │   ├── planning.py     # Planning LLM implementations
