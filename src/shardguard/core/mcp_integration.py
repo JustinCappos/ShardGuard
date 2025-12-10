@@ -21,26 +21,27 @@ class MCPClient:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         servers_dir = os.path.join(os.path.dirname(current_dir), "mcp_servers")
 
+        # Changed the naming to make it easier for the LLM to understand as LLM got confused and started hallucinating
         self.server_configs = {
-            "file-operations": {
+            "file-server": {
                 "command": sys.executable,
                 "args": [os.path.join(servers_dir, "file_server.py")],
-                "description": "File operations with security controls",
+                "description": "File server with security controls",
             },
-            "email-operations": {
+            "email-server": {
                 "command": sys.executable,
                 "args": [os.path.join(servers_dir, "email_server.py")],
-                "description": "Email operations with privacy controls",
+                "description": "Email server with privacy controls",
             },
-            "database-operations": {
+            "database-server": {
                 "command": sys.executable,
                 "args": [os.path.join(servers_dir, "database_server.py")],
-                "description": "Database operations with security controls",
+                "description": "Database server with security controls",
             },
-            "web-operations": {
+            "web-server": {
                 "command": sys.executable,
                 "args": [os.path.join(servers_dir, "web_server.py")],
-                "description": "Web operations with security controls",
+                "description": "Web server with security controls",
             },
         }
 
@@ -144,12 +145,11 @@ class MCPClient:
                                 )
 
                 description += "\n"
-
+        
         description += "When suggesting tools for tasks, include the tool names in your sub-task 'suggested_tools' field."
         return description
-
-    def get_available_servers(self) -> dict[str, str]:
-        """Get list of available servers and their descriptions."""
-        return {
-            name: config["description"] for name, config in self.server_configs.items()
-        }
+    
+    async def list_tool_names(self):
+        tools_by_server = await self.list_tools()
+        tool_names = [f"{server}.{tool.name}" for server, tools in tools_by_server.items() for tool in tools]
+        return tool_names
