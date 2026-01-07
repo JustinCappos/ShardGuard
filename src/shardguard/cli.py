@@ -38,8 +38,8 @@ app.add_typer(registry_app, name="registry")
 def _count_tools_and_servers(tools_description: str) -> tuple[int, int]:
     """Count tools and servers from tools description."""
     lines = tools_description.split("\n")
-    tool_count = len([line for line in lines if line.strip().startswith("•")])
-    server_count = len([line for line in lines if line.strip().startswith("Server:")])
+    tool_count = len([line for line in lines if "tool_key" in line.strip().lower()])
+    server_count = len([line for line in lines if "server:" in line.lower().strip()])
     return tool_count, server_count
 
 
@@ -302,7 +302,6 @@ def registry_rm_mcp(
     except Exception as e:
         log_err(f"Failed to remove services: {e}")
         raise typer.Exit(1)
-
 
 if __name__ == "__main__":
     app()
