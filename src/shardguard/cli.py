@@ -38,8 +38,8 @@ app.add_typer(registry_app, name="registry")
 def _count_tools_and_servers(tools_description: str) -> tuple[int, int]:
     """Count tools and servers from tools description."""
     lines = tools_description.split("\n")
-    tool_count = len([line for line in lines if line.strip().startswith("•")])
-    server_count = len([line for line in lines if line.strip().startswith("Server:")])
+    tool_count = len([line for line in lines if "tool_key" in line.strip().lower()])
+    server_count = len([line for line in lines if "server:" in line.lower().strip()])
     return tool_count, server_count
 
 
@@ -60,6 +60,7 @@ async def create_planner(
     try:
         # Test connectivity by checking tools
         tools_description = await planner.get_available_tools_description()
+        print("TOOLS IS", tools_description)
         if "No MCP tools available." not in tools_description:
             tool_count, server_count = _count_tools_and_servers(tools_description)
             console.print(
@@ -301,6 +302,19 @@ def registry_rm_mcp(
 
     except Exception as e:
         log_err(f"Failed to remove services: {e}")
+        raise typer.Exit(1)
+
+
+
+@registry_app.command("list-tools")
+def registry_list_tools(
+    registry: str = typer.Option(..., "--registry", "-r"),
+):
+    try:
+        log_success(reg_lib.fetch_all_tools(registry))
+
+    except Exception as e:
+        log_err(f"Failed to list services: {e}")
         raise typer.Exit(1)
 
 
