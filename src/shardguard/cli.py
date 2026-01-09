@@ -121,11 +121,11 @@ def _print_verbose_tools_info(tools_description: str) -> None:
     """Print detailed server and tool information."""
     for line in tools_description.split("\n"):
         stripped_line = line.strip()
-        if stripped_line.startswith("Server:"):
-            server_name = stripped_line.replace("Server:", "").strip()
+        if "server:" in stripped_line.lower():
+            server_name = stripped_line.lower().replace("Server:", "").strip()
             console.print(f"[bold cyan]{server_name}[/bold cyan]")
-        elif stripped_line.startswith("•"):
-            tool_name = stripped_line.replace("•", "").strip()
+        elif "tool_key" in stripped_line.lower():
+            tool_name = stripped_line.replace("-", "").strip()
             if ":" in tool_name:
                 tool_name = tool_name.split(":")[0]
             console.print(f"  └── [green]{tool_name}[/green]")
