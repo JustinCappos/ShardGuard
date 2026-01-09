@@ -178,6 +178,91 @@ src/shardguard/
 }
 ```
 
+## Managing MCP Servers
+
+ShardGuard includes a registry system for managing MCP (Model Context Protocol) servers. You can add and remove both STDIO and HTTP-based MCP servers.
+
+### Adding MCP Servers
+
+#### STDIO Transport
+
+Add an MCP server that communicates via standard input/output:
+
+```bash
+shardguard registry add-mcp \
+  --registry path/to/registry.json \
+  --name "my-stdio-server" \
+  --transport stdio \
+  --desc "My STDIO MCP Server" \
+  --cmd "node" \
+  --args "server.js,--port,3000" \
+  --cwd "/path/to/server" \
+  --env "KEY1=value1,KEY2=value2"
+```
+
+**Parameters:**
+- `--registry, -r`: Path to registry JSON file (required)
+- `--name, -n`: Unique name for the MCP server (required)
+- `--transport, -t`: Transport type - use `stdio` (required)
+- `--desc`: Description of the server (optional)
+- `--cmd`: Command to execute (required for stdio)
+- `--args`: Comma-separated command arguments (optional)
+- `--cwd`: Working directory for the command (optional)
+- `--env`: Comma-separated environment variables as KEY=value pairs (optional)
+
+##### Example
+
+```bash
+shardguard registry add-mcp \
+   --registry src/shardguard/mcp_servers/mcp_registry.json \
+   --name "db-operations" \
+   --transport stdio \
+   --desc "Database operations with security controls" \
+   --cmd "python src/shardguard/mcp_servers/database_server.py"
+```
+
+#### HTTP Transport (Streamable)
+
+Add an MCP server that communicates via HTTP:
+
+```bash
+shardguard registry add-mcp \
+  --registry path/to/registry.json \
+  --name "my-http-server" \
+  --transport streamable-http \
+  --desc "My HTTP MCP Server" \
+  --url "http://localhost:8000/mcp" \
+  --headers "Authorization=Bearer token,Content-Type=application/json" \
+  --framing jsonl
+```
+
+**Parameters:**
+- `--registry, -r`: Path to registry JSON file (required)
+- `--name, -n`: Unique name for the MCP server (required)
+- `--transport, -t`: Transport type - use `streamable-http` (required)
+- `--desc`: Description of the server (optional)
+- `--url`: HTTP endpoint URL (required for http)
+- `--headers`: Comma-separated HTTP headers as KEY=value pairs (optional)
+- `--framing`: Message framing format, either `jsonl` or `sse` (default: `jsonl`)
+
+### Removing MCP Servers
+
+Remove one or more MCP servers from the registry:
+
+```bash
+# Remove a single server
+shardguard registry remove-mcp --registry path/to/registry.json my-server-name
+
+# Remove multiple servers
+shardguard registry remove-mcp --registry path/to/registry.json server1 server2 server3
+```
+
+**Parameters:**
+- `--registry, -r`: Path to registry JSON file (required)
+- Server names as positional arguments (one or more required)
+
+The command will display which servers were successfully removed and which were not found in the registry.
+
 ## License
 
 Licensed under the Apache License 2.0. See `LICENSE` file for details.
