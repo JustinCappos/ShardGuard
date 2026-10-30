@@ -1,9 +1,15 @@
 # src/shardguard/registry.py
+"""
+Loads MCP server configurations from mcp_registry.json and manages live client connections.
+Supports HTTP and stdio transports with per-server tool allow/deny/rename rules.
+"""
+
 from __future__ import annotations
 
 import json
 import logging
 import shutil
+import threading
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -105,7 +111,7 @@ def _parse_json_arg(arg: str | None) -> Any | None:
         return None
 
 
-def parse_transport_config(
+def parse_transport_config(  # TODO: collapse args into a config dataclass
     transport: str,
     url: str | None,
     headers: str | None,
@@ -236,6 +242,29 @@ def _build_client_from_entry(name: str, cfg: dict[str, Any]) -> MCPClient:
 
 
 _CLIENTS: dict[str, MCPClient] = {}
+_STDIO_LOCKS: dict[str, threading.Lock] = {}
+_REGISTRY_LOCK = threading.Lock()
+
+
+def _get_stdio_lock(name: str) -> threading.Lock:
+    with _REGISTRY_LOCK:
+        if name not in _STDIO_LOCKS:
+            _STDIO_LOCKS[name] = threading.Lock()
+        return _STDIO_LOCKS[name]
+
+
+def is_stdio_server(registry_path: str, name: str) -> bool:
+    try:
+        reg = load_registry(registry_path)
+        cfg = reg.get(REG_MCP_KEY, {}).get(name) or {}
+        return (cfg.get("transport") or "").strip().lower() == "stdio"
+    except Exception:
+        return False
+
+
+def invalidate_client(registry_path: str, name: str) -> None:  # noqa: ARG001  # TODO: drop registry_path — unused
+    """Remove a cached client so the next call rebuilds it (forces reconnect)."""
+    _CLIENTS.pop(name, None)
 
 
 def get_or_create_client(registry_path: str, name: str) -> MCPClient:
@@ -260,12 +289,18 @@ def fetch_tools(
     init: bool = True,
     timeout: float = 15.0,
 ) -> list[dict[str, Any]]:
-    client = get_or_create_client(registry_path, name)
-
-    if init:
-        client.initialize(timeout=timeout)
-
-    return client.tools_list(timeout=timeout)
+    for attempt in range(2):
+        client = get_or_create_client(registry_path, name)
+        try:
+            if init:
+                client.initialize(timeout=timeout)
+            return client.tools_list(timeout=timeout)
+        except Exception as exc:
+            if attempt == 0:
+                logger.warning("fetch_tools %r failed (%s), reconnecting…", name, exc)
+                invalidate_client(registry_path, name)
+            else:
+                raise
 
 
 def fetch_all_tools(

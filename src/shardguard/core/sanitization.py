@@ -14,6 +14,9 @@ _PLACEHOLDER_RE = re.compile(r"\$\[([A-Za-z0-9_]+)\]")  # preferred: $[KEY]
 _DOLLAR_KEY_RE = re.compile(
     r"\$([A-Za-z][A-Za-z0-9_]*)\$?"
 )  # tolerated: $KEY or $KEY$ (could happen in LLM provider mistakes)
+_P_TOKEN_RE = re.compile(
+    r"\[\[P(\d+)\]\]"
+)  # tolerated: [[Pn]] (redactor format, LLM may emit in tool args)
 
 
 def _is_valid_email(s: str) -> bool:
@@ -139,9 +142,13 @@ def _is_allowed_tool(tool_name: str, allowed_set: set[str]) -> bool:
 
 
 def _build_tool_def(tool_info: Any) -> dict[str, Any]:
+    # OpenAI requires ^[a-zA-Z0-9_-]+$ — strip server prefix if present
+    name = tool_info.name
+    if "." in name:
+        name = name.split(".")[-1]
     return {
         "type": "function",
-        "name": tool_info.name,
+        "name": name,
         "description": tool_info.description,
         "parameters": tool_info.parameters,
         "strict": True,
@@ -187,14 +194,26 @@ def _validate_formats(
     return errs
 
 
+def _to_number(v: Any) -> float:
+    if isinstance(v, str):
+        return float(v.strip().lstrip("$").replace(",", ""))
+    return float(v)
+
+
+def _to_integer(v: Any) -> int:
+    if isinstance(v, str):
+        return int(v.strip().lstrip("$").replace(",", ""))
+    return int(v)
+
+
 _TYPE_CASTERS: dict[str, Any] = {
     "string": str,
-    "number": float,
-    "integer": int,
+    "number": _to_number,
+    "integer": _to_integer,
     "boolean": lambda v: v if isinstance(v, bool) else str(v).lower() == "true",
-    "array": lambda v: v
-    if isinstance(v, list)
-    else ([v] if v not in (None, "") else []),
+    "array": lambda v: (
+        v if isinstance(v, list) else ([v] if v not in (None, "") else [])
+    ),
     "object": lambda v: v if isinstance(v, dict) else {},
 }
 
@@ -238,9 +257,30 @@ def _coerce_types(args: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any
     return out
 
 
-class SanitizationResult:
-    """Result of input sanitization process."""
+# Matches full URLs to protect their internal slashes from splitting
+_URL_PROTECT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+# Matches standalone word/word tokens (bounded by whitespace or string boundary)
+_SLASH_TOKEN_RE = re.compile(
+    r"(?<!\S)([A-Za-z][A-Za-z0-9_-]*)\/([A-Za-z][A-Za-z0-9_-]*)(?!\S)"
+)
 
+
+def _normalize_compound_tokens(text: str) -> str:
+    protected: list[str] = []
+
+    def _stash(m: re.Match) -> str:
+        idx = len(protected)
+        protected.append(m.group(0))
+        return f"\x00URL{idx}\x00"
+
+    text = _URL_PROTECT_RE.sub(_stash, text)
+    text = _SLASH_TOKEN_RE.sub(r"\1 \2", text)
+    for i, original in enumerate(protected):
+        text = text.replace(f"\x00URL{i}\x00", original)
+    return text
+
+
+class SanitizationResult:
     def __init__(
         self, sanitized_input: str, changes_made: list[str], original_length: int
     ):

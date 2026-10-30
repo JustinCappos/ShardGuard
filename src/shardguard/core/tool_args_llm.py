@@ -62,7 +62,9 @@ def _build_executor_prompt(
 
     ph_line = ""
     if visible_placeholders:
-        ph_line = "Allowed placeholders:\n" + "\n".join(sorted(visible_placeholders))
+        ph_line = "Allowed placeholders (use exactly as written):\n" + "\n".join(
+            f"$[{k}]" for k in sorted(visible_placeholders)
+        )
 
     prev_block = ""
     if previous_results:
@@ -84,6 +86,43 @@ def _build_executor_prompt(
     return sys, user
 
 
+_UNSUPPORTED_SCHEMA_KEYS = frozenset(
+    {"$schema", "$id", "$comment", "examples", "definitions", "$defs"}
+)
+
+
+def _schema_has_open_object(schema: dict[str, Any]) -> bool:
+    # True if any object has no declared properties, incompatible with OpenAI strict mode.
+    if not isinstance(schema, dict):
+        return False
+    if schema.get("type") == "object" and not schema.get("properties"):
+        return True
+    for v in (schema.get("properties") or {}).values():
+        if _schema_has_open_object(v):
+            return True
+    return False
+
+
+def _normalize_schema_for_strict(schema: dict[str, Any]) -> dict[str, Any]:
+    # Without this, strict mode silently degrades and the model may return wrong field names.
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: v for k, v in schema.items() if k not in _UNSUPPORTED_SCHEMA_KEYS}
+    if out.get("type") != "object":
+        return out
+    props = out.get("properties")
+    if not props:
+        return out
+    out["required"] = list(props.keys())
+    out["additionalProperties"] = False
+    # Recursively normalize nested object schemas
+    out["properties"] = {
+        k: (_normalize_schema_for_strict(v) if isinstance(v, dict) else v)
+        for k, v in props.items()
+    }
+    return out
+
+
 @dataclass
 class OpenAIResponsesToolArgsLLM:
     openai_client: Any
@@ -98,6 +137,7 @@ class OpenAIResponsesToolArgsLLM:
         step_text: str,
         visible_placeholders: set[str],
         previous_results: dict[str, Any] | None = None,
+        usage_stats: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         sys, user = _build_executor_prompt(
             tool_name=tool_name,
@@ -106,12 +146,19 @@ class OpenAIResponsesToolArgsLLM:
             previous_results=previous_results,
         )
 
+        # OpenAI requires ^[a-zA-Z0-9_-]+$ — strip server prefix if present
+        api_name = (
+            tool_name.rsplit(".", maxsplit=1)[-1] if "." in tool_name else tool_name
+        )
+        use_strict = not _schema_has_open_object(tool_schema)
         tool_def = {
             "type": "function",
-            "name": tool_name,
+            "name": api_name,
             "description": tool_description or f"Tool `{tool_name}`",
-            "parameters": tool_schema,
-            "strict": True,
+            "parameters": _normalize_schema_for_strict(tool_schema)
+            if use_strict
+            else tool_schema,
+            "strict": use_strict,
         }
 
         _write_context_log(
@@ -129,7 +176,6 @@ class OpenAIResponsesToolArgsLLM:
             }
         )
 
-        # uses OpenAI Responses API
         resp = await self.openai_client.responses.create(
             model=self.model,
             input=[
@@ -137,9 +183,25 @@ class OpenAIResponsesToolArgsLLM:
                 {"role": "user", "content": user},
             ],
             tools=[tool_def],
-            tool_choice={"type": "function", "name": tool_name},
+            tool_choice={"type": "function", "name": api_name},
             parallel_tool_calls=False,
+            temperature=0,
         )
+
+        if usage_stats is not None:
+            u = getattr(resp, "usage", None)
+            if u:
+                usage_stats["prompt_tokens"] += (
+                    getattr(u, "prompt_tokens", None)
+                    or getattr(u, "input_tokens", 0)
+                    or 0
+                )
+                usage_stats["completion_tokens"] += (
+                    getattr(u, "completion_tokens", None)
+                    or getattr(u, "output_tokens", 0)
+                    or 0
+                )
+                usage_stats["total_tokens"] += getattr(u, "total_tokens", 0) or 0
 
         fc = next(
             (

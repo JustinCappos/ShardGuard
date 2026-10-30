@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from shardguard.core.baseline import BaselineAgent
 from shardguard.core.coordination import CoordinationService
 from shardguard.mcp_servers import registry as reg_lib
 from shardguard.utils.print_util import (
@@ -20,11 +21,6 @@ from shardguard.utils.print_util import (
     print_json,
 )
 
-EXECUTOR_PROVIDER_OPTION = typer.Option(
-    None,
-    "--executor-provider",
-    help="Executor LLM for tool-arg generation on the FIRST planned step only (ollama/gemini/openai). Default: openai",
-)
 EXECUTOR_MODEL_OPTION = typer.Option(
     None,
     "--executor-model",
@@ -50,14 +46,16 @@ registry_app = typer.Typer(no_args_is_help=True)
 app.add_typer(registry_app, name="registry")
 
 
-def _validate_gemini_api_key(provider: str, api_key: str | None) -> None:
+def _validate_gemini_api_key(provider: str, api_key: str | None) -> str | None:
     """Validate Gemini API key if required."""
-    if provider == "gemini" and not api_key:
+    resolved = api_key or os.environ.get("GEMINI_API_KEY")
+    if provider == "gemini" and not resolved:
         console.print(
             "[bold red]Error:[/bold red] Gemini API key required. "
             "Set GEMINI_API_KEY env var or use --gemini-api-key"
         )
         raise typer.Exit(1)
+    return resolved
 
 
 def _get_model_for_provider(provider: str, model: str | None) -> str:
@@ -67,28 +65,6 @@ def _get_model_for_provider(provider: str, model: str | None) -> str:
     return "gemini-2.0-flash-exp" if provider == "gemini" else "llama3.2"
 
 
-def _print_provider_info(provider: str, model: str, ollama_url: str) -> None:
-    """Print information about the selected provider and model."""
-    if provider == "ollama":
-        console.print(f"[dim]Using Ollama model: {model} at {ollama_url}[/dim]")
-    else:
-        console.print(f"[dim]Using Gemini model: {model}[/dim]")
-
-
-def _handle_errors(e: Exception, provider: str) -> None:
-    """Handle and display errors appropriately."""
-    if isinstance(e, ConnectionError):
-        console.print(f"[bold red]Connection Error:[/bold red] {e}")
-        if provider == "ollama":
-            console.print("Make sure Ollama is running: `ollama serve`")
-        else:
-            console.print("Check your Gemini API key and internet connection")
-    else:
-        console.print(f"[bold red]Error:[/bold red] {e}")
-    raise typer.Exit(1)
-
-
-# Common CLI options
 PROVIDER_OPTION = typer.Option(
     "ollama", "--provider", help="LLM provider (ollama or gemini)"
 )
@@ -167,7 +143,7 @@ def list_tools(
 
 
 @app.command("plan")
-def plan(
+def plan(  # TODO: collapse options into a config object
     prompt: str = typer.Argument(..., help="User request"),
     execute: bool = typer.Option(
         False,
@@ -179,20 +155,18 @@ def plan(
     json_out: bool = typer.Option(False, "--json"),
     registry_path: str = REGISTRY_PATH_OPTION,
     openai_model: str = OPENAI_MODEL_OPTION,
-    executor_provider: str | None = EXECUTOR_PROVIDER_OPTION,
     executor_model: str | None = EXECUTOR_MODEL_OPTION,
     api_key: str | None = GEMINI_API_KEY_OPTION,
 ):
+    """Show the execution plan; pass -x to also run it."""
+
     async def _run():
-        _validate_gemini_api_key(provider, api_key)
+        resolved_api_key = _validate_gemini_api_key(provider, api_key)
         detected_model = _get_model_for_provider(provider, model)
         if not os.getenv("OPENAI_API_KEY"):
             console.print("[bold red]Error:[/bold red] OPENAI_API_KEY is not set. ")
             raise typer.Exit(1)
         console.print(f"[dim]OpenAI chain model: {openai_model}[/dim]")
-        console.print(
-            f"[dim]First-step executor: {executor_provider or '(OpenAI - default)'} {executor_model or ''}[/dim]"
-        )
 
         coord = CoordinationService(
             registry_path=registry_path,
@@ -200,7 +174,7 @@ def plan(
             step_executor=detected_model,  # "ollama" | "gemini" | "openai"
             ollama_model=(executor_model or "llama3.2"),
             gemini_model=(executor_model or "gemini-2.0-flash-exp"),
-            gemini_api_key=api_key,
+            gemini_api_key=resolved_api_key,
         )
 
         try:
@@ -222,6 +196,28 @@ def plan(
                 border_style="green",
             )
         )
+
+        # Print plan steps when not executing
+        planning = result.get("planning") or {}
+        plan_steps = planning.get("steps") or []
+        allowed_tools = planning.get("allowed_tools") or []
+        if plan_steps and not result.get("trace") and not result.get("final_text"):
+            plan_table = Table(title="Execution Plan", expand=True)
+            plan_table.add_column("Step", justify="right", style="cyan", no_wrap=True)
+            plan_table.add_column("Tool", style="magenta")
+            plan_table.add_column("Task", style="white")
+            plan_table.add_column("Depends On", style="yellow")
+            for i, step in enumerate(plan_steps, start=1):
+                plan_table.add_row(
+                    str(i),
+                    step.get("tool_hint") or "",
+                    step.get("task") or "",
+                    ", ".join(step.get("depends_on") or []),
+                )
+            console.print(plan_table)
+            if allowed_tools:
+                console.print(f"[dim]Allowed tools: {', '.join(allowed_tools)}[/dim]")
+            return
 
         # Print trace of tool calls
         trace = result.get("trace") or []
@@ -278,6 +274,87 @@ def plan(
         raise typer.Exit(1)
 
 
+@app.command("baseline")
+def baseline(
+    prompt: str = typer.Argument(..., help="User request"),
+    registry_path: str = REGISTRY_PATH_OPTION,
+    openai_model: str = OPENAI_MODEL_OPTION,
+    json_out: bool = typer.Option(False, "--json"),
+):
+    """for running without shardguard, one LLM, all tools, no redaction or planning."""
+
+    async def _run():
+        if not os.getenv("OPENAI_API_KEY"):
+            console.print("[bold red]Error:[/bold red] OPENAI_API_KEY is not set.")
+            raise typer.Exit(1)
+        console.print(f"[dim]Baseline model: {openai_model}[/dim]")
+        console.print("[dim](No redaction, no planner, no per-step scoping)[/dim]")
+
+        agent = BaselineAgent(registry_path=registry_path, openai_model=openai_model)
+        try:
+            result = await agent.run(prompt)
+        except Exception as e:
+            logging.getLogger(__name__).exception("baseline.run failed")
+            console.print(f"[bold red]Baseline error:[/bold red] {e}")
+            raise typer.Exit(1)
+
+        if json_out:
+            print_json(result)
+            return
+
+        console.print(
+            Panel(
+                f"[bold]User Prompt:[/bold] {prompt}",
+                title="Baseline (no ShardGuard)",
+                border_style="yellow",
+            )
+        )
+
+        trace = result.get("trace") or []
+        if trace:
+            table = Table(title="", expand=True)
+            table.add_column("Call", justify="right", style="cyan", no_wrap=True)
+            table.add_column("Tool", style="magenta")
+            table.add_column("Arguments", style="yellow")
+            table.add_column("Output", style="white")
+
+            for i, item in enumerate(trace, start=1):
+                table.add_row(
+                    str(i),
+                    str(item.get("tool", "")),
+                    json.dumps(item.get("arguments", {}), ensure_ascii=False),
+                    json.dumps(item.get("result", {}), ensure_ascii=False),
+                )
+            console.print(table)
+
+        usage = result.get("usage") or {}
+        if usage:
+            console.print(
+                Panel(
+                    f"prompt_tokens={usage.get('prompt_tokens', 0)}\n"
+                    f"completion_tokens={usage.get('completion_tokens', 0)}\n"
+                    f"total_tokens={usage.get('total_tokens', 0)}",
+                    title="Tokens used",
+                    border_style="magenta",
+                )
+            )
+
+        final_text = result.get("final_text") or ""
+        if final_text:
+            console.print(Panel(final_text, title="Response", border_style="yellow"))
+        else:
+            console.print("[dim](No response text returned)[/dim]")
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        logging.getLogger(__name__).exception("ShardGuard CLI crashed")
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(1)
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """ShardGuard CLI - Generate safe execution plans for user prompts."""
@@ -286,13 +363,13 @@ def main(ctx: typer.Context):
         async def _init():
             console.print("🛡️  [bold blue]Welcome to ShardGuard![/bold blue]")
             console.print("\n[dim]Use --help to see available commands.[/dim]")
-            console.print("[dim]Available commands: list-tools, plan[/dim]")
+            console.print("[dim]Available commands: list-tools, plan, baseline[/dim]")
 
         asyncio.run(_init())
 
 
 @registry_app.command("add-mcp")
-def registry_add_mcp(
+def registry_add_mcp(  # TODO: collapse options into a config object
     registry: str = typer.Option(..., "--registry", "-r"),
     name: str = typer.Option(..., "--name", "-n"),
     transport: str = typer.Option(..., "--transport", "-t"),
@@ -343,6 +420,49 @@ def registry_rm_mcp(
     except Exception as e:
         log_err(f"Failed to remove services: {e}")
         raise typer.Exit(1)
+
+
+@app.command("eval")
+def eval_cmd(
+    category: str = typer.Option(
+        None, "--category", "-c", help="Run only this category"
+    ),
+    mode: str = typer.Option(
+        "both", "--mode", "-m", help="shardguard | baseline | both"
+    ),
+    limit: int = typer.Option(None, "--limit", "-n", help="Run only first N prompts"),
+    model: str = typer.Option("gpt-4o-mini", "--model", help="OpenAI model to use"),
+    registry: str = typer.Option(
+        "src/shardguard/mcp_servers/mcp_registry.json",
+        "--registry",
+        "-r",
+        help="Path to MCP JSON config",
+    ),
+):
+    """Run the ShardGuard evaluation harness against live MCPs."""
+    import sys as _sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).parent.parent.parent  # ShardGuard/
+    if str(repo_root) not in _sys.path:
+        _sys.path.insert(0, str(repo_root))
+
+    from eval.run_eval import main as eval_main  # type: ignore
+
+    args = ["eval"]
+    if category:
+        args += ["--category", category]
+    if mode:
+        args += ["--mode", mode]
+    if limit:
+        args += ["--limit", str(limit)]
+    if model:
+        args += ["--model", model]
+    if registry:
+        args += ["--registry", registry]
+
+    _sys.argv = args
+    asyncio.run(eval_main())
 
 
 if __name__ == "__main__":

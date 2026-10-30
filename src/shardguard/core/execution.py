@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from typing import Any
@@ -18,9 +19,28 @@ class McpToolExecutor:
     def call(
         self, server_name: str, tool_name: str, args: dict[str, Any]
     ) -> dict[str, Any]:
-        client = registry.get_or_create_client(self.registry_path, server_name)
-        client.initialize(timeout=15.0)
-        content = client.tools_call(tool_name, args, timeout=self.timeout)
+        is_stdio = registry.is_stdio_server(self.registry_path, server_name)
+        stdio_lock = registry._get_stdio_lock(server_name) if is_stdio else None
+        with stdio_lock if stdio_lock else contextlib.nullcontext():
+            for attempt in range(2):
+                try:
+                    client = registry.get_or_create_client(
+                        self.registry_path, server_name
+                    )
+                    client.initialize(timeout=15.0)
+                    content = client.tools_call(tool_name, args, timeout=self.timeout)
+                    break
+                except Exception as exc:
+                    registry.invalidate_client(self.registry_path, server_name)
+                    if attempt == 0:
+                        logger.warning(
+                            "tool call %s.%s failed (%s), retrying…",
+                            server_name,
+                            tool_name,
+                            exc,
+                        )
+                    else:
+                        raise
 
         text_parts: list[str] = []
         for item in content or []:
@@ -32,7 +52,7 @@ class McpToolExecutor:
         return {"content": content, "text": "\n".join(text_parts).strip()}
 
     @staticmethod
-    async def _tool_executor_llm(
+    async def _tool_executor(
         *,
         llm: ToolArgsLLM,
         tool_def: dict[str, Any],
@@ -40,6 +60,7 @@ class McpToolExecutor:
         step_text: str,
         visible_placeholders: set[str],
         previous_results: dict[str, Any] | None = None,
+        usage_stats: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         opaque_vars_log = json.dumps(sorted(visible_placeholders), indent=2)
         prev_results_log = json.dumps(previous_results or {}, indent=2)
@@ -64,4 +85,5 @@ class McpToolExecutor:
             step_text=step_text,
             visible_placeholders=visible_placeholders,
             previous_results=previous_results,
+            usage_stats=usage_stats,
         )

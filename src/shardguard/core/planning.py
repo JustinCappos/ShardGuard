@@ -36,10 +36,19 @@ class PlanningLLM:
             return s[start : end + 1]
         return None
 
-    async def plan(
-        self, redacted_prompt: str, tool_summaries: list[tuple[str, str]]
+    async def plan(  # noqa: PLR0912  # TODO: refactor — extract validation and parsing helpers
+        self,
+        redacted_prompt: str,
+        tool_summaries: list[tuple[str, str, list[str], list[str]]],
+        usage_stats: dict[str, int] | None = None,
     ) -> dict[str, Any]:
-        tools_txt = "\n".join(f"- {name}: {desc}" for name, desc in tool_summaries)
+        def _fmt(entry: tuple[str, str, list[str], list[str]]) -> str:
+            name, desc, req, opt = entry
+            req_str = f" [required: {', '.join(req)}]" if req else ""
+            opt_str = f" [optional: {', '.join(opt)}]" if opt else ""
+            return f"- {name}{req_str}{opt_str}: {desc}"
+
+        tools_txt = "\n".join(_fmt(t) for t in tool_summaries)
 
         instructions = PLANNING_PROMPT_FULL
         user_msg = f"User request:\n{redacted_prompt}\n\nAvailable tools:\n{tools_txt}"
@@ -62,6 +71,21 @@ class PlanningLLM:
             instructions=instructions,
             input=[{"role": "user", "content": user_msg}],
         )
+
+        if usage_stats is not None:
+            u = getattr(resp, "usage", None)
+            if u:
+                usage_stats["prompt_tokens"] += (
+                    getattr(u, "prompt_tokens", None)
+                    or getattr(u, "input_tokens", 0)
+                    or 0
+                )
+                usage_stats["completion_tokens"] += (
+                    getattr(u, "completion_tokens", None)
+                    or getattr(u, "output_tokens", 0)
+                    or 0
+                )
+                usage_stats["total_tokens"] += getattr(u, "total_tokens", 0) or 0
 
         txt = (getattr(resp, "output_text", "") or "").strip()
         blob = self._extract_json_object(txt) or "{}"
@@ -102,12 +126,21 @@ class PlanningLLM:
                 if not isinstance(placeholder_args, dict):
                     placeholder_args = {}
 
+                args = s.get("args") or {}
+                derived_args = s.get("derived_args") or {}
+                if not isinstance(args, dict):
+                    args = {}
+                if not isinstance(derived_args, dict):
+                    derived_args = {}
+
                 steps2.append(
                     {
                         "id": sid,
                         "task": task,
                         "tool_hint": tool_hint,
                         "depends_on": depends_on,
+                        "args": args,
+                        "derived_args": derived_args,
                         "placeholder_args": placeholder_args,
                     }
                 )

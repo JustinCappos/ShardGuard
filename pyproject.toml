@@ -18,12 +18,11 @@ dependencies = [
     "httpx[http2]>=0.28.1,<0.29.0",
     "pydantic-settings>=2.10.1,<3.0.0",
     "loguru>=0.7.3,<0.8.0",
-    "mcp>=1.0.0",
+    "mcp (>=1.0.0,<2.0.0)",
     "google-generativeai>=0.8.0,<1.0.0",
     "python-dotenv>=1.0.0,<2.0.0",
     "pbr (>=7.0.3,<8.0.0)",
-    "openai (>=2.14.0,<3.0.0)",
-    "google-genai (>=1.57.0,<2.0.0)"
+    "openai (>=2.14.0,<3.0.0)"
 ]
 
 [project.scripts]
@@ -75,6 +74,7 @@ ignore = [
     "C901",  # too complex
     "PLR0913", # too many arguments
     "PLR0915", # too many statements
+    "PLR0917", # too many positional arguments (same style preference as PLR0913)
     "PLR2004", # magic value used in comparison
     "B904",  # raise-without-from-inside-except (allow for now)
     "B017",  # pytest.raises(Exception) (allow for tests)
@@ -83,6 +83,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["T20", "ARG", "PLR2004", "B017"]
 "src/shardguard/cli.py" = ["PLC0415"]  # Allow conditional imports in CLI
+"src/shardguard/core/coordination.py" = ["PLC0415"]  # local import avoids cycle in no_output_redaction branch
 
 [tool.ruff.lint.isort]
 known-first-party = ["shardguard"]
