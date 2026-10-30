@@ -1,14 +1,23 @@
 # src/shardguard/registry.py
+"""
+Loads MCP server configurations from mcp_registry.json and manages live client connections.
+Supports HTTP and stdio transports with per-server tool allow/deny/rename rules.
+"""
+
 from __future__ import annotations
 
 import json
+import logging
 import shutil
+import threading
 import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from shardguard.core.mcp_client import MCPClient
+
+logger = logging.getLogger(__name__)
 
 REG_MCP_KEY = "mcps"
 
@@ -73,6 +82,7 @@ def add_mcp(
         entry["stdio"] = _build_stdio_entry(stdio)
 
     mcps[name] = entry
+
     _atomic_write(registry_path, reg)
     return reg
 
@@ -101,7 +111,7 @@ def _parse_json_arg(arg: str | None) -> Any | None:
         return None
 
 
-def parse_transport_config(
+def parse_transport_config(  # TODO: collapse args into a config dataclass
     transport: str,
     url: str | None,
     headers: str | None,
@@ -133,8 +143,8 @@ def parse_transport_config(
     stdio_config = {"cmd": cmd, "framing": framing}
 
     parsed_args = _parse_json_arg(args)
-    if parsed_args:
-        stdio_config["args"] = parsed_args
+    if args is not None:
+        stdio_config["args"] = parsed_args if parsed_args is not None else args
 
     if cwd:
         stdio_config["cwd"] = cwd
@@ -167,28 +177,26 @@ def _build_http_entry(http: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def _coerce_args_list(raw_args: Any) -> list[str] | None:
+def _coerce_args_list(raw_args: Any) -> list[str]:
     if raw_args is None:
-        return None
-    if isinstance(raw_args, list):
+        return []
+    if isinstance(raw_args, list) and all(isinstance(x, str) for x in raw_args):
         return raw_args
     if isinstance(raw_args, str):
         return [raw_args]
-    raise ValueError("stdio.args has a parsing error.")
+    raise ValueError("stdio.args must be a string or list[str]")
 
 
 def _build_stdio_entry(stdio: dict[str, Any] | None) -> dict[str, Any]:
     if not stdio or not isinstance(stdio, dict) or not stdio.get("cmd"):
         raise ValueError("stdio.cmd is required for stdio")
 
-    args_list = _coerce_args_list(stdio.get("args"))
-
     entry_stdio: dict[str, Any] = {
         "cmd": stdio["cmd"],
         "framing": (stdio.get("framing") or "jsonl").lower(),
+        "args": _coerce_args_list(stdio.get("args")),
     }
-    if args_list:
-        entry_stdio["args"] = args_list
+
     if stdio.get("cwd"):
         entry_stdio["cwd"] = stdio["cwd"]
     if stdio.get("env"):
@@ -234,6 +242,29 @@ def _build_client_from_entry(name: str, cfg: dict[str, Any]) -> MCPClient:
 
 
 _CLIENTS: dict[str, MCPClient] = {}
+_STDIO_LOCKS: dict[str, threading.Lock] = {}
+_REGISTRY_LOCK = threading.Lock()
+
+
+def _get_stdio_lock(name: str) -> threading.Lock:
+    with _REGISTRY_LOCK:
+        if name not in _STDIO_LOCKS:
+            _STDIO_LOCKS[name] = threading.Lock()
+        return _STDIO_LOCKS[name]
+
+
+def is_stdio_server(registry_path: str, name: str) -> bool:
+    try:
+        reg = load_registry(registry_path)
+        cfg = reg.get(REG_MCP_KEY, {}).get(name) or {}
+        return (cfg.get("transport") or "").strip().lower() == "stdio"
+    except Exception:
+        return False
+
+
+def invalidate_client(registry_path: str, name: str) -> None:  # noqa: ARG001  # TODO: drop registry_path — unused
+    """Remove a cached client so the next call rebuilds it (forces reconnect)."""
+    _CLIENTS.pop(name, None)
 
 
 def get_or_create_client(registry_path: str, name: str) -> MCPClient:
@@ -258,12 +289,18 @@ def fetch_tools(
     init: bool = True,
     timeout: float = 15.0,
 ) -> list[dict[str, Any]]:
-    client = get_or_create_client(registry_path, name)
-
-    if init:
-        client.initialize(timeout=timeout)
-
-    return client.tools_list(timeout=timeout)
+    for attempt in range(2):
+        client = get_or_create_client(registry_path, name)
+        try:
+            if init:
+                client.initialize(timeout=timeout)
+            return client.tools_list(timeout=timeout)
+        except Exception as exc:
+            if attempt == 0:
+                logger.warning("fetch_tools %r failed (%s), reconnecting…", name, exc)
+                invalidate_client(registry_path, name)
+            else:
+                raise
 
 
 def fetch_all_tools(
@@ -279,7 +316,8 @@ def fetch_all_tools(
     for name in mcps.keys():
         try:
             out[name] = fetch_tools(registry_path, name, init=init, timeout=timeout)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to fetch tools from %r: %s", name, exc)
             out[name] = []
     return out
 
@@ -289,6 +327,6 @@ def clear_client_cache() -> None:
     for c in _CLIENTS.values():
         try:
             c.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to close MCP client: %s", exc)
     _CLIENTS.clear()
