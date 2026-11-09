@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from shardguard.core.auth import resolve_http_headers
 from shardguard.core.mcp_client import MCPClient
 
 logger = logging.getLogger(__name__)
@@ -213,9 +214,12 @@ def _build_client_from_entry(name: str, cfg: dict[str, Any]) -> MCPClient:
     if transport == "streamable-http":
         http = cfg.get("http") or {}
         url = str(http.get("url") or "").rstrip("/")
-        headers = http.get("headers") or {}
+        headers = dict(http.get("headers") or {})
         if not url:
             raise ValueError(f"{name!r}: http.url missing")
+        auth_headers = resolve_http_headers(name, cfg)
+        for k, v in auth_headers.items():
+            headers[k] = v
         return MCPClient(
             "streamable-http",
             http_url=url,
